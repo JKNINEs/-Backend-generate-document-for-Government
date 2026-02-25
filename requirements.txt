@@ -1,0 +1,13 @@
+fastapi==0.121.3
+uvicorn==0.38.0
+mysql-connector-python==9.3.0
+bcrypt==5.0.0
+python-dotenv==1.0.1
+python-multipart==0.0.20
+docxtpl==0.20.2
+python-docx==1.2.0
+lxml==6.0.2
+Jinja2==3.1.6
+pythainlp==5.2.0
+bahttext==1.0.2
+python-dotenv==1.0.1
