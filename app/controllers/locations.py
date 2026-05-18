@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 import mysql.connector
-from app.database import get_db_connection
+from app.config.database import get_db_connection
 from app.models.locations_model import locationsModel
 
 router = APIRouter()

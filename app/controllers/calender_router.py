@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 import mysql.connector
-from app.database import get_db_connection
+from app.config.database import get_db_connection
 from app.models.calender_model import EventModel
 from datetime import datetime, date
 

@@ -1,13 +1,14 @@
 from fastapi import APIRouter, HTTPException, Request, Depends, UploadFile, File
 from fastapi.responses import FileResponse
-from app.database import get_db_connection
+from app.config.database import get_db_connection
+from app.config.settings import TEMPLATES_DIR
 import os
 import shutil
 
 router = APIRouter()
 
 # Path to templates directory (adjust as needed)
-TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "../../templates")
+
 
 # Allowed template filenames (whitelist for security)
 ALLOWED_TEMPLATES = {

@@ -2,14 +2,15 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from docxtpl import DocxTemplate
 import os
-from app.database import get_db_connection
+from app.config.database import get_db_connection
+from app.config.settings import TEMPLATES_DIR
 from pythainlp import word_tokenize # อย่าลืม import
 from bahttext import bahttext  # ✅ เพิ่มไว้ด้านบนสุดของไฟล์
+import zipfile
 
 router = APIRouter()
 
 # --- 1. ฟังก์ชันช่วยงาน (Helper Functions) ---
-
 
 
 def format_id_card(id_str):
@@ -178,6 +179,7 @@ def clean_text_smart_wrap_once(value, max_chars=23):
             
     return final_text.strip()
 
+
 def format_money(value):
     """แปลงตัวเลขเป็นรูปแบบเงิน 18000 -> 18,000"""
     if value is None: return "0"
@@ -204,8 +206,8 @@ def format_month_year(date_val):
         year_thai = date_val.year + 543
         return f"{month_name} {year_thai}"
     except:
-        return ""
-
+        return ""   
+    
 def format_day_month_year(date_val):
     """แปลงวันที่จาก DB เป็น 'เดือน พ.ศ.' เช่น ตุลาคม ๒๕๖๘"""
     if not date_val: 
@@ -222,8 +224,7 @@ def format_day_month_year(date_val):
         year_thai = date_val.year + 543
         return f"{day} {month_name} {year_thai}"
     except:
-        return ""    
-
+        return ""      
 
 def wrap_location_at_announce(value):
     if not value: return ''
@@ -235,8 +236,8 @@ def wrap_location_at_announce(value):
         return text[:36] + " " + text[36:]
     
     # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
-    return text
-
+    return text      
+    
 def wrap_project_at_announce(value):
     if not value: return ''
     text = str(value).strip()
@@ -249,10 +250,43 @@ def wrap_project_at_announce(value):
     # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
     return text
 
+
+def wrap_location_at_snack(value):
+    if not value: return ''
+    text = str(value).strip()
+    length = len(text)
+
+    
+    if length > 18 and length <= 90:
+        return text[:51] + " " + text[51:]
+    
+    # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
+    return text
+
+
+def wrap_pos_at_snack(value):
+    if not value: return ''
+    text = str(value).strip()
+    length = len(text)
+
+    
+    if length > 18 and length <= 40:
+        return text[:15] + " " + text[15:]
+    
+    # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
+    return text    
 # ----------------------------------------------
 
 # ✅ รับ batch_code เป็น str (เผื่อบางทีส่งมาเป็น text)
-@router.get("/complete/{batch_code}")
+@router.get(
+    "/generate-all/{batch_code}",
+    responses={
+        200: {
+            "content": {"application/zip": {}},
+            "description": "ส่งไฟล์ ZIP ที่รวมเอกสาร Word ทั้งหมด",
+        }
+    }
+)
 async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -265,6 +299,8 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             tb.batch_code, tb.training_dates_text, tb.training_time, tb.target_group,
             mc.name AS course_name,
             mc.code AS course_code,
+
+            tb.system_code AS code_system,
             tb.cert_announce_date as announce_date,
             tb.budget_speaker,
             tb.budget_material,
@@ -274,6 +310,9 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             tb.duration_days,
             tb.number_of_snacks,
             (tb.budget_speaker * mc.hours) AS total_inst,
+            tb.request_doc_no,
+            tb.borrow_date,
+
             mc.course_type AS training_type,
             mc.hours AS duration,
 
@@ -284,16 +323,26 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             pa.kind_of_fiscal AS kind_of_fiscal,
             pa.fiscal_year AS kind_of_year,
             pa.expenses AS expenses,
-            
+
             pj.name AS project_name,
             pl.name AS plan_name,
             loc.name AS location_name,
+
             inst.name AS instructor_name,
             inst.id_card AS instructor_id_card,
+
             s_ctrl.name AS controller_name, s_ctrl.position AS controller_pos,
             s_c1.name AS coord1_name, s_c1.position AS coord1_position,
             s_c2.name AS coord2_name,s_c2.position AS coord2_position,
-            s_c3.name AS coord3_name,s_c3.position AS coord3_position
+            s_c3.name AS coord3_name,s_c3.position AS coord3_position,
+            s_c4.name AS borrow_name,s_c4.position AS coord4_position,
+
+            la.loan_date,
+            la.contract_no,
+            la.clearance_head_day1 AS head_day1,
+            la.clearance_head_day2 AS head_day2,
+            la.clearance_date 
+            
         FROM training_batches tb
         LEFT JOIN master_courses mc ON tb.course_id = mc.id
         LEFT JOIN master_locations loc ON tb.location_id = loc.id
@@ -305,6 +354,8 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
         LEFT JOIN master_staff s_c1 ON tb.coordinator_1_id = s_c1.id
         LEFT JOIN master_staff s_c2 ON tb.coordinator_2_id = s_c2.id
         LEFT JOIN master_staff s_c3 ON tb.coordinator_3_id = s_c3.id
+        LEFT JOIN master_staff s_c4 ON tb.borrow_staff_id = s_c4.id
+        LEFT JOIN loan_records la ON tb.id = la.training_batch_id
         WHERE tb.batch_code = %s 
         """
         
@@ -323,27 +374,48 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
                 
         """
         # ชื่อคนสมัครใน apllicants
-        # 1. ปรับ SQL ให้ดึงข้อมูลเฉพาะคนที่ 'ผ่าน'
-        sql_names = """
+        sql_all_names = """
+            SELECT name 
+            FROM applicants 
+            WHERE training_batch_id = %s
+            ORDER BY id ASC
+        """
+        cursor.execute(sql_all_names, (data['batch_id'],))
+        all_applicants = cursor.fetchall()
+
+        # สร้าง Dictionary หลัก (ประกาศแค่ครั้งเดียวที่นี่)
+        final_mapping = {f"M_{i}": "" for i in range(1, 51)} # เผื่อไว้ 50 ชื่อตามที่คุณต้องการ
+
+        for index, row in enumerate(all_applicants):
+            if index < 50:  # ป้องกัน index เกินจากที่เตรียมไว้
+                final_mapping[f"M_{index + 1}"] = clean_text(row['name'])
+
+
+        # 2. เตรียมตัวแปรสำหรับนับและ Dictionary
+        sql_pass_names = """
             SELECT name, gender 
             FROM applicants 
             WHERE training_batch_id = %s AND result = 'ผ่าน'
             ORDER BY id ASC
         """
-        cursor.execute(sql_names, (data['batch_id'],))
-        applicant_names = cursor.fetchall()
+
+        cursor.execute(sql_pass_names, (data['batch_id'],))
+        passed_applicants = cursor.fetchall()
+
+# เตรียมค่าว่างสำหรับคนผ่านไว้ก่อน (M_1_pass ถึง M_36_pass) เพื่อไม่ให้ Word Error
+        for i in range(1, 50):
+            final_mapping[f"M_{i}_pass"] = ""
 
         # 2. เตรียมตัวแปรสำหรับนับและ Dictionary
-        applicant_mapping = {}
-        total_passed = len(applicant_names)
-        count_female = 0
-        count_male = 0
+            total_passed = len(passed_applicants)
+            count_female = 0
+            count_male = 0
 
         # 3. Loop เพื่อใส่ชื่อในรูปแบบ M_{i}_pass และนับจำนวนเพศ
-        for index, row in enumerate(applicant_names):
-            # สร้าง Key ตามที่คุณต้องการ เช่น M_1_pass, M_2_pass
-            key_name = f"M_{index + 1}_pass"
-            applicant_mapping[key_name] = clean_text(row['name'])
+        for index, row in enumerate(passed_applicants):
+            # ใส่ชื่อผู้ผ่านลงใน Dictionary เดิม (final_mapping)
+            if index < 50:
+                final_mapping[f"M_{index + 1}_pass"] = clean_text(row['name'])
             
             # นับจำนวนแยกเพศ
             if row['gender'] == 'หญิง':
@@ -352,17 +424,15 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
                 count_male += 1
 
         # 4. ใส่ตัวเลขสรุปจำนวนลงใน Dictionary (เพื่อเอาไปแปะใน Word)
-        applicant_mapping['total_passed'] = total_passed
-        applicant_mapping['count_female'] = count_female
-        applicant_mapping['count_male'] = count_male
+            final_mapping['total_passed'] = total_passed
+            final_mapping['count_female'] = count_female
+            final_mapping['count_male'] = count_male
 
-        # กรณีต้องการตั้งค่าว่างไว้สำหรับ M_1 ถึง M_36 (กัน Error ใน Word ถ้าคนผ่านไม่ถึง 36 คน)
-        for i in range(1, 37):
-            if f"M_{i}_pass" not in applicant_mapping:
-                applicant_mapping[f"M_{i}_pass"] = ""
+     
 
         cursor.execute(sql_count, (data['batch_id'],)) 
         count_res = cursor.fetchone()
+        final_mapping['total_all'] = count_res['total'] if count_res else 0
         applicant_count = count_res['total'] if count_res else 0
         raw_budget_material = float(data.get('budget_material') or 0)
         raw_budget_food = float(data.get('budget_food') or 0)
@@ -370,6 +440,9 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
         number_of_snacks = float(data.get('number_of_snacks') or 0)
         duration_days = float(data.get('duration_days') or 0)
         tatal_inst_value = float(data.get('total_inst') or 0)
+        head_day1 = int(data.get("head_day1") or 0)
+        head_day2 = int(data.get("head_day2") or 0)
+
         total_material_value = raw_budget_material * applicant_count
         total_food_value = raw_budget_food * applicant_count * duration_days
         total_snack_value = raw_budget_snack * applicant_count * number_of_snacks
@@ -378,21 +451,40 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             total_food_value +      # ค่าอาหาร
             total_snack_value       # ค่าอาหารว่าง
         )
+        food_last_day = (raw_budget_food* head_day1) + (raw_budget_food * head_day2*(duration_days-1))
+        snack_last_day = (raw_budget_snack* head_day1 *2) + (raw_budget_snack * head_day2*(number_of_snacks-2))
+        total = food_last_day + snack_last_day
+        total_text = bahttext(total)
+        total_food_snack = total_food_value + total_snack_value
+        total_fands_text = bahttext(total_food_snack)
+        total_all_food_snake = total_food_value + total_snack_value
         total_all_text = bahttext(total_all_budget)
-
+        total_food_text = bahttext(total_food_value)
+        total_f_s_text = bahttext(total_all_food_snake)
+        total_inst_text = bahttext(tatal_inst_value)
+        remaining = total_all_food_snake - total
+        remaining_text = bahttext(remaining)
         # 4. สร้าง Context (ใช้ clean_decimal ตามที่ขอ)
         context = {
             'batch_code': data.get('batch_code'),
             'course_name': clean_text(data.get('course_name')),
+            'code_system':data.get('code_system'),
             
             # ✅ ใช้ clean_decimal ตัด .0
             'course_code': clean_decimal(data.get('course_code')), 
             'course_namewarp': wrap_course_at_18(data.get('course_name')),
             'course_namewarpfa': wrap_course_at_18forapplicant(data.get('course_name')),
+
+            'locationwarp': wrap_location_at_16(data.get('location_name')),
+            'locationwarpfa': wrap_location_at_90(data.get('location_name')),
+
             'locationwarp_complete': wrap_location_at_announce(data.get('location_name')),
             'locationwarp_complete_two' :clean_text_smart_wrap_once(data.get('location_name'), max_chars=51),
+
             'plan_name': clean_text(data.get('plan_name')),
-            'project_name_cpt': clean_text_smart_wrap_once(data.get('project_name'), max_chars=66),
+            'project_name': clean_text(data.get('project_name')),
+            'project_name1': clean_text_smart_wrap_once(data.get('project_name'), max_chars=23),
+            'project_name_cpt': clean_text_smart_wrap_once(data.get('project_name'), max_chars=47),
             'activity_name': clean_text(data.get('activity_name')),
             'activity': clean_text_locked(data.get('activity')),
             'sub_activity_name': clean_text(data.get('sub_activity')),
@@ -407,10 +499,17 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             # ✅ ใช้ clean_decimal กับระยะเวลาด้วย
             'duration': clean_decimal(data.get('duration')), 
             'request_date': format_month_year(data.get('request_date')),
+            'request_d_m_y': format_day_month_year(data.get('request_date')),
+            'request_doc_no':data.get('request_doc_no'),
             'dates': clean_text(data.get('training_dates_text')),
-            'announce_date' : format_month_year(data.get('announce_date')),
+            'borrow_date': format_month_year(data.get('borrow_date')),
             'time': clean_text(data.get('training_time')),
+
+            'announce_date' : format_month_year(data.get('announce_date')),
+
             'location': clean_text(data.get('location_name')),
+            'location_snack': wrap_location_at_snack(data.get('location_name')),
+
             'instructor': clean_text(data.get('instructor_name')),
             'instructor_id': format_id_card(data.get('instructor_id_card')),
             'expenses': clean_text(data.get('expenses')),
@@ -426,12 +525,14 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             'coord2_pos': clean_text(data.get('coord2_position')),
             'coord3_name': clean_text(data.get('coord3_name')),
             'coord3_pos': clean_text(data.get('coord3_position')),
+            #ชื่อผู้ยืมเงิน
+            'borrow_name': clean_text(data.get('borrow_name')),
+            'borrow_pos': clean_text(data.get('coord4_position')),
+            'borrow_pos_warp': wrap_pos_at_snack(data.get('coord4_position')),
             # ค่าตอบแทนต่อชั่วโมง
             'budget_speaker': format_money(data.get('budget_speaker')),
-            'duration': clean_decimal(data.get('duration')),
             'total_inst': format_money(data.get('total_inst')),
             #คน * ค่าวัสดุ
-            'applicant_count': applicant_count,
             'budget_material': format_money(raw_budget_material),
             'total_material': format_money(total_material_value),
             # food * tatal people * days 
@@ -445,31 +546,71 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
 
             # total
             'total_all': format_money(total_all_budget),
-            'total_all_thai': total_all_text
+            'total_all_thai': total_all_text,
+            'total_material_thai': total_all_text,
+            'total_food_thai':total_food_text,
+            'total_f_s_thai':total_f_s_text,
+            'total_f_s' :format_money(total_all_food_snake),
+            'total_food_snack' :format_money(total_food_snack),
+            'total_inst_thai':total_inst_text,
+             #สรุปหักล้าง
+            'contract_no' : clean_text(data.get('contract_no')),
+            'total_fs_thai': total_fands_text,
+            'loan_date': format_day_month_year(data.get('loan_date')),
+            'total_everything': format_money(total),
+            'total_thai_text': total_text,
+            'remaining' : format_money(remaining),
+            'remainig_thai':remaining_text,
+            #วันที่หักล้าง
+            'clearance_date':format_month_year(data.get('clearance_date'))
         }
+        context.update(final_mapping)
 
-        context.update(applicant_mapping)
         # 5. Gen Word และ Save ไฟล์
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-        template_path = os.path.join(project_root, "templates", "announce_date.docx")
+        print(f"Looking for templates in: {TEMPLATES_DIR}")
+        zip_filename = f"Docs_{batch_code}.zip"
         
-        if not os.path.exists(template_path):
-             raise HTTPException(status_code=500, detail=f"หาไฟล์ Template ไม่เจอที่: {template_path}")
-        
-        output_filename = f"Doc_{data['batch_code']}.docx"
-        
-        doc = DocxTemplate(template_path)
-        doc.render(context)
-        doc.save(output_filename)
+        # รายชื่อ Template ที่ต้องการเจน
+        templates_to_gen = [
+            {"file": "applicant.docx", "name": f"รายชื่อผู้สมัคร_{batch_code}.docx"},
+            {"file": "Template.docx", "name": f"เปิดฝึก_{batch_code}.docx"},
+            {"file": "material.docx", "name": f"เบิกค่าวัสดุ_{batch_code}.docx"},
+            {"file": "food_borrow.docx", "name": f"เบิกค่าอาหาร_{batch_code}.docx"},
+            {"file": "food_snack_borrow.docx", "name": f"เบิกค่าอาหารว่าง_{batch_code}.docx"},
+            {"file": "announce_date.docx", "name": f"ประกาศจบ_{batch_code}.docx"},
+            {"file": "refund_summary.docx", "name": f"สรุปหักล้าง_{batch_code}.docx"},
+            {"file": "inst_borrow.docx", "name": f"เบิกค่าวิทยากร{batch_code}.docx"},
+            # เพิ่มไฟล์อื่นๆ ได้ที่นี่
+        ]
 
-        # เพิ่ม Task ลบไฟล์ทิ้งหลังจากส่งเสร็จ
-        background_tasks.add_task(remove_file, output_filename)
+        # 3. สร้างไฟล์ ZIP
+        with zipfile.ZipFile(zip_filename, 'w') as zipf:
+            for item in templates_to_gen:
+                template_path = os.path.join(TEMPLATES_DIR, item["file"])
+                
+                if not os.path.exists(template_path):
+                    continue # หรือจะ raise error ก็ได้ครับ
+                
+                # Render Word แต่ละไฟล์
+                doc = DocxTemplate(template_path)
+                doc.render(context)
+                
+                # บันทึกเป็นไฟล์ชั่วคราวเพื่อเอาใส่ ZIP
+                temp_word_path = item["name"]
+                doc.save(temp_word_path)
+                
+                # เขียนไฟล์ลง ZIP แล้วลบไฟล์ชั่วคราวทิ้งทันที
+                zipf.write(temp_word_path)
+                os.remove(temp_word_path)
 
+        # 4. เพิ่ม Task ลบไฟล์ ZIP หลังจากส่งเสร็จ
+        background_tasks.add_task(remove_file, zip_filename)
+
+        # 5. ส่งไฟล์ ZIP กลับไปให้ User
         return FileResponse(
-            path=output_filename, 
-            filename=output_filename, 
-            media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            path=zip_filename, 
+            filename=zip_filename, 
+            media_type='application/zip'
         )
 
     except Exception as e:

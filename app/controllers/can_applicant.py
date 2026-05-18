@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from docxtpl import DocxTemplate
 import os
-from app.database import get_db_connection
+from app.config.database import get_db_connection
+from app.config.settings import TEMPLATES_DIR
 from pythainlp import word_tokenize # อย่าลืม import
 from bahttext import bahttext  # ✅ เพิ่มไว้ด้านบนสุดของไฟล์
 
@@ -396,9 +397,7 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
 
         context.update(applicant_mapping)
         # 5. Gen Word และ Save ไฟล์
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-        template_path = os.path.join(project_root, "templates", "applicant.docx")
+        template_path = os.path.join(TEMPLATES_DIR, "applicant.docx")
         
         if not os.path.exists(template_path):
              raise HTTPException(status_code=500, detail=f"หาไฟล์ Template ไม่เจอที่: {template_path}")

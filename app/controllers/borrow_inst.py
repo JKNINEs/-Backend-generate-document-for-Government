@@ -2,14 +2,14 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from docxtpl import DocxTemplate
 import os
-from app.database import get_db_connection
+from app.config.database import get_db_connection
+from app.config.settings import TEMPLATES_DIR
 from pythainlp import word_tokenize # อย่าลืม import
 from bahttext import bahttext  # ✅ เพิ่มไว้ด้านบนสุดของไฟล์
 
 router = APIRouter()
 
 # --- 1. ฟังก์ชันช่วยงาน (Helper Functions) ---
-
 
 
 def format_id_card(id_str):
@@ -91,93 +91,6 @@ def clean_text_strict(value):
     
     return text 
 
-def wrap_course_at_18(value):
-    """นับ 18 ตัวอักษรแล้วเคาะวรรคทันที (สำหรับชื่อหลักสูตร)"""
-    if not value: return ''
-    text = str(value).strip()
-    length = len(text)
-    
-    # ✅ เงื่อนไข: วรรคที่ 18 เฉพาะหลักสูตรที่ยาว 35 ถึง 39 ตัวอักษรเท่านั้น
-    # (ประโยค "เทคนิคการสอนงานฯ" ยาว 35 จะติดเงื่อนไขนี้และถูกวรรค)
-    if length >= 30 and length <= 32:
-        return text[:18] + " " + text[18:]
-    
-    # ✅ ถ้าความยาวเป็น 40 ขึ้นไป (เช่น "การพัฒนาโปรแกรมบนเว็บฯ") 
-    # หรือสั้นกว่า 35 จะไม่ถูกวรรคและส่งค่าเดิมกลับไป
-    return clean_text(text)
-
-def wrap_course_at_18forapplicant(value):
-    """นับ 18 ตัวอักษรแล้วเคาะวรรคทันที (สำหรับชื่อหลักสูตร)"""
-    if not value: return ''
-    text = str(value).strip()
-    length = len(text)
-    
-    # ✅ เงื่อนไข: วรรคที่ 18 เฉพาะหลักสูตรที่ยาว 35 ถึง 39 ตัวอักษรเท่านั้น
-    # (ประโยค "เทคนิคการสอนงานฯ" ยาว 35 จะติดเงื่อนไขนี้และถูกวรรค)
-    if length >= 25 and length <= 40:
-        return text[:20] + " " + text[20:]
-    
-    # ✅ ถ้าความยาวเป็น 40 ขึ้นไป (เช่น "การพัฒนาโปรแกรมบนเว็บฯ") 
-    # หรือสั้นกว่า 35 จะไม่ถูกวรรคและส่งค่าเดิมกลับไป
-    return clean_text(text)
-
-
-def wrap_location_at_16(value):
-    if not value: return ''
-    text = str(value).strip()
-    length = len(text)
-
-    
-    if length > 18 and length < 35:
-        return text[:18] + " " + text[18:]
-    
-    # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
-    return text
-
-def wrap_location_at_90(value):
-    if not value: return ''
-    text = str(value).strip()
-    length = len(text)
-
-    
-    if length > 18 and length <= 93:
-        return text[:19] + " " + text[19:]
-    
-    # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
-    return text
-
-def clean_text_smart_wrap_once(value, max_chars=23):
-    """
-    23 ตัวอักษร 
-    แล้วเคาะวรรคแค่ 1 ครั้งเพื่อให้ Word ตัดบรรทัดได้สวย ส่วนที่เหลือปล่อยยาวปกติ
-    """
-    if not value: return ''
-    text = str(value)
-    
-    # 1. จัดระเบียบข้อความเบื้องต้น
-    text = ' '.join(text.split())
-    
-    # 2. ตัดคำภาษาไทย
-    tokens = word_tokenize(text, engine="newmm")
-    
-    final_text = ""
-    current_line_length = 0
-    has_wrapped = False  # 🚩 ตัวแปรเช็กว่าเคาะวรรคไปหรือยัง
-    
-    for word in tokens:
-        word_len = len(word)
-        
-        # ✅ เงื่อนไข: ถ้ายังไม่เคยเคาะ และคำนี้จะทำให้ยาวเกินจุดที่กำหนด
-        if not has_wrapped and (current_line_length + word_len > max_chars):
-            final_text += " " + word  # เคาะวรรคครั้งแรกและครั้งเดียว
-            has_wrapped = True        # เซตสถานะว่าเคาะไปแล้ว
-        else:
-            final_text += word
-            
-        current_line_length += word_len
-            
-    return final_text.strip()
-
 def format_money(value):
     """แปลงตัวเลขเป็นรูปแบบเงิน 18000 -> 18,000"""
     if value is None: return "0"
@@ -204,8 +117,8 @@ def format_month_year(date_val):
         year_thai = date_val.year + 543
         return f"{month_name} {year_thai}"
     except:
-        return ""
-
+        return ""   
+    
 def format_day_month_year(date_val):
     """แปลงวันที่จาก DB เป็น 'เดือน พ.ศ.' เช่น ตุลาคม ๒๕๖๘"""
     if not date_val: 
@@ -222,11 +135,37 @@ def format_day_month_year(date_val):
         year_thai = date_val.year + 543
         return f"{day} {month_name} {year_thai}"
     except:
-        return ""          
+        return ""
+
+def wrap_location_at_snack(value):
+    if not value: return ''
+    text = str(value).strip()
+    length = len(text)
+
+    
+    if length > 18 and length <= 90:
+        return text[:51] + " " + text[51:]
+    
+    # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
+    return text
+
+
+def wrap_pos_at_snack(value):
+    if not value: return ''
+    text = str(value).strip()
+    length = len(text)
+
+    
+    if length > 18 and length <= 40:
+        return text[:15] + " " + text[15:]
+    
+    # ถ้าเกิน 70 (เช่น ศูนย์เรียนรู้ฯ ที่นับได้ 87) จะไม่ถูกวรรคครับ
+    return text
+
 # ----------------------------------------------
 
 # ✅ รับ batch_code เป็น str (เผื่อบางทีส่งมาเป็น text)
-@router.get("/Material/{batch_code}")
+@router.get("/generate-inst/{batch_code}")
 async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -242,6 +181,8 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             tb.budget_speaker,
             tb.budget_material,
             tb.request_date,
+            tb.request_doc_no,
+            tb.borrow_date,
             tb.budget_food,
             tb.budget_snack,
             tb.duration_days,
@@ -264,7 +205,8 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             s_ctrl.name AS controller_name, s_ctrl.position AS controller_pos,
             s_c1.name AS coord1_name, s_c1.position AS coord1_position,
             s_c2.name AS coord2_name,s_c2.position AS coord2_position,
-            s_c3.name AS coord3_name,s_c3.position AS coord3_position
+            s_c3.name AS coord3_name,s_c3.position AS coord3_position,
+            s_c4.name AS borrow_name,s_c4.position AS coord4_position
         FROM training_batches tb
         LEFT JOIN master_courses mc ON tb.course_id = mc.id
         LEFT JOIN master_locations loc ON tb.location_id = loc.id
@@ -276,6 +218,7 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
         LEFT JOIN master_staff s_c1 ON tb.coordinator_1_id = s_c1.id
         LEFT JOIN master_staff s_c2 ON tb.coordinator_2_id = s_c2.id
         LEFT JOIN master_staff s_c3 ON tb.coordinator_3_id = s_c3.id
+        LEFT JOIN master_staff s_c4 ON tb.borrow_staff_id = s_c4.id
         WHERE tb.batch_code = %s 
         """
         
@@ -293,23 +236,6 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
                 WHERE training_batch_id = %s
                 
         """
-        # ชื่อคนสมัครใน apllicants
-        sql_names = """
-            SELECT name 
-            FROM applicants 
-            WHERE training_batch_id = %s
-            ORDER BY id ASC
-        """
-        cursor.execute(sql_names, (data['batch_id'],))
-        applicant_names = cursor.fetchall()
-
-        # เตรียม Dictionary สำหรับรายชื่อ M_1 ถึง M_36 (ตั้งค่าว่างไว้ก่อนกัน Error)
-        applicant_mapping = {f"M_{i}": "" for i in range(1, 37)}
-        # นำชื่อที่ได้จาก DB มาใส่ในตัวแปร M_1, M_2, ... ตามลำดับ
-        for index, row in enumerate(applicant_names):
-            if index <= 36:  # ตามฟอร์มของคุณที่มี 18 + 18 ชื่อ
-                applicant_mapping[f"M_{index + 1}"] = clean_text(row['name'])
-
         cursor.execute(sql_count, (data['batch_id'],)) 
         count_res = cursor.fetchone()
         applicant_count = count_res['total'] if count_res else 0
@@ -327,8 +253,11 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             total_food_value +      # ค่าอาหาร
             total_snack_value       # ค่าอาหารว่าง
         )
+        total_all_food_snake = total_food_value + total_snack_value
         total_all_text = bahttext(total_all_budget)
-        total_all_text = bahttext(total_material_value)
+        total_food_text = bahttext(total_food_value)
+        total_f_s_text = bahttext(total_all_food_snake)
+        total_inst_text = bahttext(tatal_inst_value)
 
         # 4. สร้าง Context (ใช้ clean_decimal ตามที่ขอ)
         context = {
@@ -337,12 +266,9 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             
             # ✅ ใช้ clean_decimal ตัด .0
             'course_code': clean_decimal(data.get('course_code')), 
-            'course_namewarp': wrap_course_at_18(data.get('course_name')),
-            'course_namewarpfa': wrap_course_at_18forapplicant(data.get('course_name')),
-            'locationwarp': wrap_location_at_16(data.get('location_name')),
-            'locationwarpfa': wrap_location_at_90(data.get('location_name')),
+            
             'plan_name': clean_text(data.get('plan_name')),
-            'project_name': clean_text_smart_wrap_once(data.get('project_name'), max_chars=23),
+            'project_name': clean_text(data.get('project_name')),
             'activity_name': clean_text(data.get('activity_name')),
             'activity': clean_text_locked(data.get('activity')),
             'sub_activity_name': clean_text(data.get('sub_activity')),
@@ -356,10 +282,14 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             
             # ✅ ใช้ clean_decimal กับระยะเวลาด้วย
             'duration': clean_decimal(data.get('duration')), 
+            'request_date': format_month_year(data.get('request_date')), # วันเปิดฝึก
             'request_d_m_y': format_day_month_year(data.get('request_date')),
+            'request_doc_no':data.get('request_doc_no'),
             'dates': clean_text(data.get('training_dates_text')),
+            'borrow_date': format_month_year(data.get('borrow_date')), #วันขอยืม
             'time': clean_text(data.get('training_time')),
             'location': clean_text(data.get('location_name')),
+            'location_snack': wrap_location_at_snack(data.get('location_name')),
             'instructor': clean_text(data.get('instructor_name')),
             'instructor_id': format_id_card(data.get('instructor_id_card')),
             'expenses': clean_text(data.get('expenses')),
@@ -375,6 +305,10 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             'coord2_pos': clean_text(data.get('coord2_position')),
             'coord3_name': clean_text(data.get('coord3_name')),
             'coord3_pos': clean_text(data.get('coord3_position')),
+            #ชื่อผู้ยืมเงิน
+            'borrow_name': clean_text(data.get('borrow_name')),
+            'borrow_pos': clean_text(data.get('coord4_position')),
+            'borrow_pos_warp': wrap_pos_at_snack(data.get('coord4_position')),
             # ค่าตอบแทนต่อชั่วโมง
             'budget_speaker': format_money(data.get('budget_speaker')),
             'duration': clean_decimal(data.get('duration')),
@@ -395,19 +329,19 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             # total
             'total_all': format_money(total_all_budget),
             'total_all_thai': total_all_text,
-            'total_material_thai': total_all_text
+            'total_food_thai':total_food_text,
+            'total_f_s_thai':total_f_s_text,
+            'total_f_s' :format_money(total_all_food_snake),
+            'total_inst_thai':total_inst_text
         }
 
-        context.update(applicant_mapping)
         # 5. Gen Word และ Save ไฟล์
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-        template_path = os.path.join(project_root, "templates", "material.docx")
+        template_path = os.path.join(TEMPLATES_DIR, "inst_borrow.docx")
         
         if not os.path.exists(template_path):
              raise HTTPException(status_code=500, detail=f"หาไฟล์ Template ไม่เจอที่: {template_path}")
         
-        output_filename = f"Doc_{data['batch_code']}.docx"
+        output_filename = f"เบิกค่าวิทยากร{data['batch_code']}.docx"
         
         doc = DocxTemplate(template_path)
         doc.render(context)

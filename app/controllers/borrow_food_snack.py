@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from docxtpl import DocxTemplate
 import os
-from app.database import get_db_connection
+from app.config.database import get_db_connection
+from app.config.settings import TEMPLATES_DIR
 from pythainlp import word_tokenize # อย่าลืม import
 from bahttext import bahttext  # ✅ เพิ่มไว้ด้านบนสุดของไฟล์
 
@@ -164,7 +165,7 @@ def wrap_pos_at_snack(value):
 # ----------------------------------------------
 
 # ✅ รับ batch_code เป็น str (เผื่อบางทีส่งมาเป็น text)
-@router.get("/summary/{batch_code}")
+@router.get("/generate-food-snack/{batch_code}")
 async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -205,12 +206,7 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             s_c1.name AS coord1_name, s_c1.position AS coord1_position,
             s_c2.name AS coord2_name,s_c2.position AS coord2_position,
             s_c3.name AS coord3_name,s_c3.position AS coord3_position,
-            s_c4.name AS borrow_name,s_c4.position AS coord4_position,
-            la.loan_date,
-            la.contract_no,
-            la.clearance_head_day1 AS head_day1,
-            la.clearance_head_day2 AS head_day2,
-            la.clearance_date 
+            s_c4.name AS borrow_name,s_c4.position AS coord4_position
         FROM training_batches tb
         LEFT JOIN master_courses mc ON tb.course_id = mc.id
         LEFT JOIN master_locations loc ON tb.location_id = loc.id
@@ -223,7 +219,6 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
         LEFT JOIN master_staff s_c2 ON tb.coordinator_2_id = s_c2.id
         LEFT JOIN master_staff s_c3 ON tb.coordinator_3_id = s_c3.id
         LEFT JOIN master_staff s_c4 ON tb.borrow_staff_id = s_c4.id
-        LEFT JOIN loan_records la ON tb.id = la.training_batch_id
         WHERE tb.batch_code = %s 
         """
         
@@ -250,8 +245,6 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
         number_of_snacks = float(data.get('number_of_snacks') or 0)
         duration_days = float(data.get('duration_days') or 0)
         tatal_inst_value = float(data.get('total_inst') or 0)
-        head_day1 = int(data.get("head_day1") or 0)
-        head_day2 = int(data.get("head_day2") or 0)
         total_material_value = raw_budget_material * applicant_count
         total_food_value = raw_budget_food * applicant_count * duration_days
         total_snack_value = raw_budget_snack * applicant_count * number_of_snacks
@@ -260,20 +253,10 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             total_food_value +      # ค่าอาหาร
             total_snack_value       # ค่าอาหารว่าง
         )
-
-        # แก้ไขบรรทัดนี้
-        food_last_day = (raw_budget_food* head_day1) + (raw_budget_food * head_day2*(duration_days-1))
-        snack_last_day = (raw_budget_snack* head_day1 *2) + (raw_budget_snack * head_day2*(number_of_snacks-2))
-        total = food_last_day + snack_last_day
-        total_text = bahttext(total)
-        total_food_snack = total_food_value + total_snack_value
-        total_fands_text = bahttext(total_food_snack)
         total_all_food_snake = total_food_value + total_snack_value
         total_all_text = bahttext(total_all_budget)
         total_food_text = bahttext(total_food_value)
         total_f_s_text = bahttext(total_all_food_snake)
-        remaining = total_all_food_snake - total
-        remaining_text = bahttext(remaining)
         # 4. สร้าง Context (ใช้ clean_decimal ตามที่ขอ)
         context = {
             'batch_code': data.get('batch_code'),
@@ -346,29 +329,16 @@ async def generate_document(batch_code: str, background_tasks: BackgroundTasks):
             'total_all_thai': total_all_text,
             'total_food_thai':total_food_text,
             'total_f_s_thai':total_f_s_text,
-            'total_f_s' :format_money(total_all_food_snake),
-            'total_food_snack' :format_money(total_food_snack),
-             #สรุปหักล้าง
-            'contract_no' : clean_text(data.get('contract_no')),
-            'total_fs_thai': total_fands_text,
-            'loan_date': format_day_month_year(data.get('loan_date')),
-            'total_everything': format_money(total),
-            'total_thai_text': total_text,
-            'remaining' : format_money(remaining),
-            'remainig_thai':remaining_text,
-            #วันที่หักล้าง
-            'clearance_date':format_month_year(data.get('clearance_date'))
+            'total_f_s' :format_money(total_all_food_snake)
         }
 
         # 5. Gen Word และ Save ไฟล์
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-        template_path = os.path.join(project_root, "templates", "refund_summary.docx")
+        template_path = os.path.join(TEMPLATES_DIR, "food_snack_borrow.docx")
         
         if not os.path.exists(template_path):
              raise HTTPException(status_code=500, detail=f"หาไฟล์ Template ไม่เจอที่: {template_path}")
         
-        output_filename = f"Doc_{data['batch_code']}.docx"
+        output_filename = f"เบิกค่าอาหารว่าง {data['batch_code']}.docx"
         
         doc = DocxTemplate(template_path)
         doc.render(context)

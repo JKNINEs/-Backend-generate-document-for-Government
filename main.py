@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from datetime import date
-from app.database import get_db_connection
-from app.routers import (applicants,
+from app.config.database import get_db_connection
+from app.controllers import (applicants,
                          courses,instructors,locations,staff,allow_practice,can_applicant,material,borrow_food
                          ,borrow_food_snack,complete_std,borrow_inst,Summary_of_the_loan,GenWord,activity_router
                          ,batch_router,loan_router,auth_router,calender_router,admin_router,template_router)
@@ -30,12 +30,17 @@ async def lifespan(app: FastAPI):
 
 
 
-app = FastAPI()
+app = FastAPI(
+    # docs_url=None,
+    # redoc_url=None,
+    # openapi_url=None,
+    lifespan=lifespan
+)
 
 # 2. ตั้งค่า CORS (เพื่อให้หน้าเว็บ Frontend เรียก API ได้)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://27.254.144.167"], # หรือใส่เฉพาะ ["http://127.0.0.1:5500"]
+    allow_origins=["http://127.0.0.1:5500"], # หรือใส่เฉพาะ ["http://127.0.0.1:5500"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

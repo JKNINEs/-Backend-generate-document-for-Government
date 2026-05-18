@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Response
-from app.database import get_db_connection
+from app.config.database import get_db_connection
 from app.models.auth_model import LoginModel
 import mysql.connector
 import secrets
